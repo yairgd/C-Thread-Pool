@@ -21,6 +21,11 @@
 #endif
 
 #include "thpool.h"
+#include "mymalloc.h"
+#define malloc  malloc_get
+#define free malloc_put
+
+
 
 #ifdef THPOOL_DEBUG
 #define THPOOL_DEBUG 1
@@ -166,7 +171,9 @@ struct thpool_* thpool_init(int num_threads){
 	}
 
 	/* Wait for threads to initialize */
-	while (thpool_p->num_threads_alive != num_threads) {}
+	while (thpool_p->num_threads_alive != num_threads) {
+		k_msleep(100);
+	}
 
 	return thpool_p;
 }
@@ -221,7 +228,7 @@ void thpool_destroy(thpool_* thpool_p){
 	while (tpassed < TIMEOUT && thpool_p->num_threads_alive){
 		bsem_post_all(thpool_p->jobqueue.has_jobs);
 		time (&end);
-		tpassed = difftime(end,start);
+		tpassed = 0; //difftime(end,start);
 	}
 
 	/* Poll remaining threads */
@@ -246,7 +253,7 @@ void thpool_destroy(thpool_* thpool_p){
 void thpool_pause(thpool_* thpool_p) {
 	int n;
 	for (n=0; n < thpool_p->num_threads_alive; n++){
-		pthread_kill(thpool_p->threads[n]->pthread, SIGUSR1);
+	//	pthread_kill(thpool_p->threads[n]->pthread, SIGUSR1);
 	}
 }
 
@@ -268,7 +275,7 @@ int thpool_num_threads_working(thpool_* thpool_p){
 
 
 
-
+K_THREAD_STACK_ARRAY_DEFINE(stack_t, 4, 1024);
 
 /* ============================ THREAD ============================== */
 
@@ -281,6 +288,15 @@ int thpool_num_threads_working(thpool_* thpool_p){
  */
 static int thread_init (thpool_* thpool_p, struct thread** thread_p, int id){
 
+	pthread_attr_t tattr;
+	int stacksize=1024;
+	int ret;
+//	void *stackbase = (void *) malloc(stacksize);
+
+	ret = pthread_attr_init(&tattr);
+	/* setting a new size */
+	ret = pthread_attr_setstack(&tattr, &stack_t[id][0], stacksize);
+
 	*thread_p = (struct thread*)malloc(sizeof(struct thread));
 	if (*thread_p == NULL){
 		err("thread_init(): Could not allocate memory for thread\n");
@@ -290,7 +306,9 @@ static int thread_init (thpool_* thpool_p, struct thread** thread_p, int id){
 	(*thread_p)->thpool_p = thpool_p;
 	(*thread_p)->id       = id;
 
-	pthread_create(&(*thread_p)->pthread, NULL, (void * (*)(void *)) thread_do, (*thread_p));
+
+	pthread_create(&(*thread_p)->pthread, &tattr, (void * (*)(void *)) thread_do, (*thread_p));
+
 	pthread_detach((*thread_p)->pthread);
 	return 0;
 }
@@ -332,6 +350,7 @@ static void* thread_do(struct thread* thread_p){
 	/* Assure all threads have been created before starting serving */
 	thpool_* thpool_p = thread_p->thpool_p;
 
+#if 0
 	/* Register signal handler */
 	struct sigaction act;
 	sigemptyset(&act.sa_mask);
@@ -340,7 +359,7 @@ static void* thread_do(struct thread* thread_p){
 	if (sigaction(SIGUSR1, &act, NULL) == -1) {
 		err("thread_do(): cannot handle SIGUSR1");
 	}
-
+#endif
 	/* Mark thread as alive (initialized) */
 	pthread_mutex_lock(&thpool_p->thcount_lock);
 	thpool_p->num_threads_alive += 1;
