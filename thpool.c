@@ -22,8 +22,8 @@
 
 #include "thpool.h"
 #include "mymalloc.h"
-#define malloc  malloc_get
-#define free malloc_put
+//#define malloc  malloc_get
+//#define free malloc_put
 
 
 
@@ -172,7 +172,9 @@ struct thpool_* thpool_init(int num_threads){
 
 	/* Wait for threads to initialize */
 	while (thpool_p->num_threads_alive != num_threads) {
+#ifdef CONFIG_ZEPHYR
 		k_msleep(100);
+#endif
 	}
 
 	return thpool_p;
@@ -287,15 +289,22 @@ K_THREAD_STACK_ARRAY_DEFINE(stack_t, 4, 1024);
  * @return 0 on success, -1 otherwise.
  */
 static int thread_init (thpool_* thpool_p, struct thread** thread_p, int id){
-
+	pthread_attr_t *ptattr = 0;
+	
+	/* setting a new size */
+#ifdef CONFIG_ZEPHYR
+	/* RTOS Requires a predefined stack place */
 	pthread_attr_t tattr;
 	int stacksize=1024;
-	int ret;
-//	void *stackbase = (void *) malloc(stacksize);
+	if (pthread_attr_init(&tattr) < 0) {
+		return -1;
+	}
+	if (pthread_attr_setstack(&tattr, &stack_t[id][0], stacksize) < 0) {
+		return -1;
+	}
+	ptattr = &tattr;
 
-	ret = pthread_attr_init(&tattr);
-	/* setting a new size */
-	ret = pthread_attr_setstack(&tattr, &stack_t[id][0], stacksize);
+#endif
 
 	*thread_p = (struct thread*)malloc(sizeof(struct thread));
 	if (*thread_p == NULL){
@@ -307,7 +316,7 @@ static int thread_init (thpool_* thpool_p, struct thread** thread_p, int id){
 	(*thread_p)->id       = id;
 
 
-	pthread_create(&(*thread_p)->pthread, &tattr, (void * (*)(void *)) thread_do, (*thread_p));
+	pthread_create(&(*thread_p)->pthread, ptattr, (void * (*)(void *)) thread_do, (*thread_p));
 
 	pthread_detach((*thread_p)->pthread);
 	return 0;
